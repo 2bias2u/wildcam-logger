@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NERDS uc – Wildcam Logger</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { margin-bottom: .2rem; }
+    .sub { color: #666; margin-top: 0; }
+    form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: .5rem; margin: 1.5rem 0; }
+    input, button { padding: .5rem; font-size: 1rem; }
+    button { background: #2e7d32; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; }
+    th { background: #f4f4f4; }
+    .error { color: #b00020; }
+    footer { margin-top: 2rem; color: #666; font-size: .9rem; }
+    @media (max-width: 640px) { form { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Wildcam Logger</h1>
+  <p class="sub">Nature Exploration by Radio and Data Streams Unlimited</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="{{ url_for('add') }}">
+    <input name="animal" placeholder="Tier (z.B. Braunbär)" required>
+    <input name="stream" placeholder="Stream (z.B. Katmai Brooks Falls)" required>
+    <input name="seen_at" type="datetime-local" value="{{ now }}" required>
+    <button type="submit">Speichern</button>
+  </form>
+
+  <h2>Alle Sichtungen ({{ sightings|length }})</h2>
+  <table>
+    <thead><tr><th>#</th><th>Tier</th><th>Stream</th><th>Gesehen am</th></tr></thead>
+    <tbody>
+      {% for s in sightings %}
+      <tr>
+        <td>{{ s.id }}</td>
+        <td>{{ s.animal }}</td>
+        <td>{{ s.stream }}</td>
+        <td>{{ s.seen_at.strftime('%d.%m.%Y %H:%M') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">Noch keine Einträge.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <footer>Ausgeliefert von: <strong>{{ hostname }}</strong></footer>
+</body>
+</html>
