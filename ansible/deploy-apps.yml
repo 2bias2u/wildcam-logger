@@ -1,0 +1,112 @@
+# Task 2: beide Apps (Land & Air, Sea) als rootless Podman-Container auf allen Workern.
+# Aufruf:  ansible-playbook deploy-apps.yml -K
+- name: Wildcam-Apps mit Podman deployen
+  hosts: pworkers
+  environment:
+    # damit "systemctl --user" und rootless Podman ueber SSH funktionieren
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.user_uid }}"
+
+  vars:
+    repo_url: https://github.com/2bias2u/wildcam-logger.git
+    app_dir: /home/kuba/wildcam-logger
+    image: localhost/wildcam-logger
+    db_host: 192.168.100.22
+    db_password: "{{ lookup('file', '~/.wildcam-db-password') }}"   # liegt NICHT im Repo
+    apps:
+      - { name: landair, title: "Wildcam Logger – Land & Air", prefix: /landair, db: wildcam_landair, port: 5001 }
+      - { name: sea,     title: "Wildcam Logger – Sea",        prefix: /sea,     db: wildcam_sea,     port: 5002 }
+
+  tasks:
+    # ---------- Vorbereitung (mit sudo) ----------
+    - name: git installieren
+      become: true
+      ansible.builtin.apt:
+        name: git
+        state: present
+
+    - name: Lingering fuer kuba (User-Dienste starten beim Boot, auch ohne Login)
+      become: true
+      ansible.builtin.command: loginctl enable-linger kuba
+      args:
+        creates: /var/lib/systemd/linger/kuba
+
+    # ---------- Code + Image (als kuba, rootless) ----------
+    - name: Repo klonen bzw. aktualisieren
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: main
+      register: repo
+
+    - name: Pruefen, ob das Image schon existiert
+      ansible.builtin.command: podman image exists {{ image }}
+      register: image_check
+      failed_when: false
+      changed_when: false
+
+    - name: Image bauen (nur bei neuem Code oder fehlendem Image)
+      ansible.builtin.command: podman build -t {{ image }} {{ app_dir }}
+      when: repo.changed or image_check.rc != 0
+      notify: Apps neu starten
+
+    # ---------- Konfiguration pro App ----------
+    - name: Ordner fuer die Env-Dateien
+      ansible.builtin.file:
+        path: /home/kuba/.config/wildcam
+        state: directory
+        mode: "0700"
+
+    - name: Env-Datei pro App (Titel, URL-Praefix, eigene Datenbank)
+      ansible.builtin.copy:
+        dest: "/home/kuba/.config/wildcam/{{ item.name }}.env"
+        mode: "0600"
+        content: |
+          APP_TITLE={{ item.title }}
+          SCRIPT_NAME={{ item.prefix }}
+          DATABASE_URL=postgresql+psycopg2://wildcam:{{ db_password }}@{{ db_host }}:5432/{{ item.db }}
+      loop: "{{ apps }}"
+      no_log: true            # Passwort nicht in der Ausgabe zeigen
+      notify: Apps neu starten
+
+    # ---------- Autostart: Podman hat keinen Daemon -> systemd uebernimmt ----------
+    - name: Ordner fuer User-systemd-Units
+      ansible.builtin.file:
+        path: /home/kuba/.config/systemd/user
+        state: directory
+
+    - name: systemd-Unit pro App
+      ansible.builtin.copy:
+        dest: "/home/kuba/.config/systemd/user/wildcam-{{ item.name }}.service"
+        content: |
+          [Unit]
+          Description=Wildcam Logger {{ item.name }} (rootless Podman)
+
+          [Service]
+          ExecStartPre=-/usr/bin/podman rm -f wildcam-{{ item.name }}
+          ExecStart=/usr/bin/podman run --rm --name wildcam-{{ item.name }} --hostname %H -p {{ item.port }}:5000 --env-file %h/.config/wildcam/{{ item.name }}.env {{ image }}
+          ExecStop=/usr/bin/podman stop -t 10 wildcam-{{ item.name }}
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=default.target
+      loop: "{{ apps }}"
+      notify: Apps neu starten
+
+    - name: Apps aktivieren und starten
+      ansible.builtin.systemd:
+        name: "wildcam-{{ item.name }}"
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ apps }}"
+
+  handlers:
+    - name: Apps neu starten
+      ansible.builtin.systemd:
+        name: "wildcam-{{ item.name }}"
+        scope: user
+        state: restarted
+        daemon_reload: true
+      loop: "{{ apps }}"
