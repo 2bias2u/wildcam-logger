@@ -1,0 +1,118 @@
+# Task 2: Traefik als rootless Podman-Container auf ptraefik (Load Balancer fuer beide Apps).
+# Aufruf:  ansible-playbook deploy-traefik.yml -K
+- name: Traefik mit Podman deployen
+  hosts: lb
+  environment:
+    XDG_RUNTIME_DIR: /run/user/1000     # UID von kuba, siehe deploy-apps.yml
+
+  vars:
+    traefik_dir: /home/kuba/traefik
+    traefik_image: docker.io/library/traefik:v3.5   # feste Version wie in Task 1
+    apps:
+      - { name: landair, prefix: /landair, port: 5001 }
+      - { name: sea,     prefix: /sea,     port: 5002 }
+
+  tasks:
+    - name: Lingering fuer kuba
+      become: true
+      ansible.builtin.command: loginctl enable-linger kuba
+      args:
+        creates: /var/lib/systemd/linger/kuba
+
+    - name: Ordner fuer die Traefik-Konfiguration
+      ansible.builtin.file:
+        path: "{{ traefik_dir }}/conf.d"
+        state: directory
+
+    # Statische Konfiguration: Ports, Dashboard, wo die Routen liegen
+    - name: traefik.yaml
+      ansible.builtin.copy:
+        dest: "{{ traefik_dir }}/traefik.yaml"
+        content: |
+          providers:
+            file:
+              directory: /etc/traefik/conf.d/
+              watch: true
+          entryPoints:
+            websecure:
+              address: ':8443'       # rootless: keine Ports < 1024
+              http:
+                tls: {}              # selbstsigniertes Zertifikat (wie Task 1)
+            traefik:
+              address: ':8080'       # Dashboard
+          api:
+            dashboard: true
+            insecure: true
+          log:
+            level: INFO
+          accessLog: {}
+      notify: Traefik neu starten
+
+    # Dynamische Konfiguration: Routen + Worker (Liste kommt aus inventory.ini)
+    - name: Routen fuer beide Apps
+      ansible.builtin.copy:
+        dest: "{{ traefik_dir }}/conf.d/wildcam.yaml"
+        content: |
+          http:
+            routers:
+          {% for app in apps %}
+              {{ app.name }}:
+                rule: "PathPrefix(`{{ app.prefix }}`)"
+                entryPoints: [websecure]
+                service: {{ app.name }}
+          {% endfor %}
+            services:
+          {% for app in apps %}
+              {{ app.name }}:
+                loadBalancer:
+                  servers:
+          {% for host in groups['pworkers'] %}
+                    - url: "http://{{ hostvars[host].ansible_host }}:{{ app.port }}"
+          {% endfor %}
+                  healthCheck:
+                    path: {{ app.prefix }}/health
+                    interval: 10s
+          {% endfor %}
+
+    - name: Ordner fuer User-systemd-Units
+      ansible.builtin.file:
+        path: /home/kuba/.config/systemd/user
+        state: directory
+
+    - name: systemd-Unit fuer Traefik
+      ansible.builtin.copy:
+        dest: /home/kuba/.config/systemd/user/traefik.service
+        content: |
+          [Unit]
+          Description=Traefik (rootless Podman)
+
+          [Service]
+          ExecStartPre=-/usr/bin/podman rm -f traefik
+          ExecStart=/usr/bin/podman run --rm --name traefik -p 8443:8443 -p 8080:8080 -v {{ traefik_dir }}/traefik.yaml:/etc/traefik/traefik.yaml:ro -v {{ traefik_dir }}/conf.d:/etc/traefik/conf.d:ro {{ traefik_image }}
+          ExecStop=/usr/bin/podman stop -t 10 traefik
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=default.target
+      notify: Traefik neu starten
+
+    - name: Traefik-Image vorab laden (nur falls noch nicht vorhanden)
+      ansible.builtin.shell: podman image exists {{ traefik_image }} || podman pull {{ traefik_image }}
+      changed_when: false
+
+    - name: Traefik aktivieren und starten
+      ansible.builtin.systemd:
+        name: traefik
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Traefik neu starten
+      ansible.builtin.systemd:
+        name: traefik
+        scope: user
+        state: restarted
+        daemon_reload: true
