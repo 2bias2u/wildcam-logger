@@ -1,0 +1,56 @@
+# Task 2 (Bonus): Podman-VMs automatisch aus dem Ubuntu-Template klonen.
+# Laeuft auf der Steuer-VM "ansible" (192.168.100.25) und spricht die Proxmox-API an.
+# Aufruf:  ansible-playbook create-podman-vms.yml
+- name: Podman-VMs auf Proxmox anlegen
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    proxmox_node: kuba
+    template_name: ubuntu-template      # VM 101
+    storage: local-lvm
+    memory_mb: 1536                     # weniger als die Docker-VMs (3 GB), RAM ist knapp
+    # IP kommt per DHCP-Reservierung (dnsmasq auf dem Host) anhand der MAC
+    vms:
+      - { id: 301, name: pworker1, mac: "BC:24:11:00:03:01" }   # 192.168.100.31
+      - { id: 302, name: pworker2, mac: "BC:24:11:00:03:02" }   # 192.168.100.32
+      - { id: 303, name: pworker3, mac: "BC:24:11:00:03:03" }   # 192.168.100.33
+      - { id: 310, name: ptraefik, mac: "BC:24:11:00:03:10" }   # 192.168.100.41
+
+  # Verbindungsdaten gelten fuer alle proxmox_kvm-Aufrufe unten
+  module_defaults:
+    community.general.proxmox_kvm:
+      api_host: 192.168.100.1
+      api_user: root@pam
+      api_token_id: ansible
+      api_token_secret: "{{ lookup('file', '~/.proxmox-token') }}"   # Token liegt NICHT im Repo
+      validate_certs: false             # Proxmox nutzt ein selbstsigniertes Zertifikat
+      node: "{{ proxmox_node }}"
+
+  tasks:
+    - name: 1) Template klonen (Full Clone)
+      community.general.proxmox_kvm:
+        clone: "{{ template_name }}"
+        newid: "{{ item.id }}"
+        name: "{{ item.name }}"
+        full: true
+        storage: "{{ storage }}"
+        timeout: 600
+      loop: "{{ vms }}"
+
+    - name: 2) RAM und feste MAC-Adresse setzen
+      community.general.proxmox_kvm:
+        vmid: "{{ item.id }}"
+        memory: "{{ memory_mb }}"
+        net:
+          net0: "virtio={{ item.mac }},bridge=vmbr0"
+        update: true
+        update_unsafe: true             # noetig, damit Ansible net0 aendern darf
+      loop: "{{ vms }}"
+
+    - name: 3) VMs starten
+      community.general.proxmox_kvm:
+        vmid: "{{ item.id }}"
+        state: started
+      loop: "{{ vms }}"
