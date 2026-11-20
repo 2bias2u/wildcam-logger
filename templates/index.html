@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NERDS uc – Wildcam Logger</title>
+  <title>NERDS uc – {{ title }}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { margin-bottom: .2rem; }
@@ -20,7 +20,7 @@
   </style>
 </head>
 <body>
-  <h1>Wildcam Logger</h1>
+  <h1>{{ title }}</h1>
   <p class="sub">Nature Exploration by Radio and Data Streams Unlimited</p>
 
   {% if error %}<p class="error">{{ error }}</p>{% endif %}

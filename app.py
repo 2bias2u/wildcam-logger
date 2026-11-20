@@ -11,6 +11,10 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
     "DATABASE_URL", "sqlite:///wildcam.db"
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# Variante dieses Containers (z.B. "Wildcam Logger – Land & Air" / "– Sea").
+# Steuert nur den angezeigten Titel; die Daten trennt DATABASE_URL,
+# den URL-Praefix (/landair, /sea) setzt Gunicorn ueber SCRIPT_NAME.
+APP_TITLE = os.environ.get("APP_TITLE", "Wildcam Logger")
 db = SQLAlchemy(app)
 
 
@@ -34,6 +38,7 @@ def index():
         "index.html",
         sightings=sightings,
         hostname=socket.gethostname(),
+        title=APP_TITLE,
         now=datetime.now().strftime("%Y-%m-%dT%H:%M"),
         error=request.args.get("error"),
     )
