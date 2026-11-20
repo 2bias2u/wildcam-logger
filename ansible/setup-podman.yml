@@ -1,0 +1,22 @@
+# Task 2: Grundeinrichtung aller Podman-VMs (Hostname + Podman).
+# Aufruf:  ansible-playbook setup-podman.yml -K     (-K fragt einmal nach dem sudo-Passwort)
+- name: Podman-VMs einrichten
+  hosts: podman            # alle 4 VMs aus inventory.ini
+  become: true             # Aufgaben mit sudo ausfuehren
+
+  tasks:
+    - name: Hostname setzen (Name aus dem Inventory, z.B. pworker1)
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Alten Template-Namen in /etc/hosts ersetzen
+      ansible.builtin.replace:
+        path: /etc/hosts
+        regexp: '\bubuntu-template\b'
+        replace: "{{ inventory_hostname }}"
+
+    - name: Podman installieren
+      ansible.builtin.apt:
+        name: podman
+        state: present
+        update_cache: true
